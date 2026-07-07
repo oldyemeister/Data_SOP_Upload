@@ -242,11 +242,7 @@ def current_minute() -> str:
 
 
 def upload_task_json(client: DSMClient, task_key: str, remote_dir: str) -> None:
-    payload = {
-        "task_key": task_key,
-        "nas_path": f"/volume1/database/sop/{task_key}/sop_video.mp4",
-        "replace_existing": False,
-    }
+    payload = task_json_payload(task_key)
     with tempfile.TemporaryDirectory(prefix="frame_sop_task_json_") as temp_dir:
         local_json = Path(temp_dir) / "sop_task.json"
         local_json.write_text(
@@ -258,6 +254,33 @@ def upload_task_json(client: DSMClient, task_key: str, remote_dir: str) -> None:
             "application/json; charset=utf-8",
         )
     print(f"[JSON] 已覆盖上传：{remote_dir}/sop_task.json")
+
+
+def task_json_payload(task_key: str) -> dict[str, Any]:
+    return {
+        "task_id": "",
+        "task_key": task_key,
+        "nas_path": f"/volume1/database/sop/{task_key}/sop_video.mp4",
+        "replace_existing": False,
+    }
+
+
+def upload_all_task_json(client: DSMClient, successful_keys: list[str]) -> None:
+    payload = [task_json_payload(task_key) for task_key in successful_keys]
+    with tempfile.TemporaryDirectory(prefix="frame_sop_tasks_json_") as temp_dir:
+        local_json = Path(temp_dir) / "sop_tasks.json"
+        local_json.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        client.upload(
+            local_json, "/database/sop", True, "sop_tasks.json",
+            "application/json; charset=utf-8",
+        )
+    print(
+        f"[汇总 JSON] 已覆盖上传 /database/sop/sop_tasks.json，"
+        f"包含 {len(successful_keys)} 个 task"
+    )
 
 
 def select_episode(client: DSMClient, operator_dir: str) -> tuple[int, str, str] | None:
@@ -507,8 +530,20 @@ def run(args: argparse.Namespace) -> int:
                 print(f"[任务失败] {task_key}：{exc}", file=sys.stderr)
 
         if args.dry_run:
-            print("\n[DRY-RUN] 未下载、未截帧、未创建目录、未上传、未更新日志")
-        elif log_records:
+            print(
+                f"\n[DRY-RUN] 将用 {len(dry_run_counts)} 个 task 覆盖生成 "
+                "/database/sop/sop_tasks.json"
+            )
+            print("[DRY-RUN] 未下载、未截帧、未创建目录、未上传、未更新日志")
+        else:
+            if counts:
+                try:
+                    upload_all_task_json(client, list(counts))
+                except (DSMAPIError, requests.RequestException, RuntimeError, OSError) as exc:
+                    failed_videos.append(f"sop_tasks.json（汇总上传失败）：{exc}")
+                    print(f"[汇总 JSON 失败] {exc}", file=sys.stderr)
+
+        if not args.dry_run and log_records:
             log_path = "/database/sop/upload_log.txt"
             print(f"\n[日志] 下载已有内容并追加 {len(log_records)} 条记录：{log_path}")
             old_log = client.download_text(log_path)
@@ -521,7 +556,7 @@ def run(args: argparse.Namespace) -> int:
                 local_log.write_text(combined, encoding="utf-8")
                 client.upload(local_log, "/database/sop", True, "upload_log.txt", "text/plain; charset=utf-8")
             print("[日志] 覆盖上传成功")
-        else:
+        elif not args.dry_run:
             print("\n[日志] 本次没有成功处理的 task_key，不更新日志")
 
         if args.dry_run:

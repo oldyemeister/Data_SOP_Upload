@@ -282,8 +282,9 @@ def current_minute() -> str:
 
 
 def upload_task_json(client: DSMClient, task_key: str, remote_dir: str) -> None:
-    """生成并覆盖上传 SOP 任务描述文件。task_key 已足够，因此省略 task_id。"""
+    """生成并覆盖上传 SOP 任务描述文件，预留空的 task_id。"""
     payload = {
+        "task_id": "",
         "task_key": task_key,
         "nas_path": f"/volume1/database/sop/{task_key}/sop_video.mp4",
         "replace_existing": False,
